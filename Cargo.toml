@@ -1,0 +1,7 @@
+[package]
+name = "hello2"
+version = "0.1.0"
+authors = ["Kevin Nasto <kevinnasto@gmail.com>"]
+
+[dependencies]
+portmidi = "0.2.4"
