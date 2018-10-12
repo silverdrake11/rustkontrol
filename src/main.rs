@@ -3,15 +3,43 @@ extern crate portmidi;
 use portmidi::PortMidi;
 use portmidi::types::MidiEvent;
 
-use std::time::Duration;
+use std::fmt::Display;
+use std::time;
 use std::thread;
 
 
 const DEVICE_NUM: i32 = 3;
 const MAX_MESSAGES: usize = 128;
+const NUM_SLIDERS: usize = 8;
 
-//test comment here
-#[derive(Debug)] // This line allows you to print enum values
+
+#[derive(Copy, Clone, Default)]
+struct Control {
+  knob: u8,
+  slider: u8,
+  solo: bool,
+  mute: bool,
+  rec: bool,
+}
+
+#[derive(Default)]
+struct NK2 {
+  controls: [Control; NUM_SLIDERS],
+  track_left: bool,
+  track_right: bool,
+  cycle: bool,
+  set: bool,
+  marker_left: bool,
+  marker_right: bool,
+  rewind: bool,
+  fast_forward: bool,
+  stop: bool,
+  play: bool,
+  record: bool,
+}
+
+
+#[derive(Debug, PartialEq)] 
 enum Korg {
   S, M, R,
   Knob, Slider,
@@ -21,14 +49,14 @@ enum Korg {
   Rewind, FastForward, Stop, Play, Record,
 }
 
-
-struct Control {
+struct Message {
     name: Korg,
     group: u8,
     value: u8,
+    timestamp: u32,
 }
 
-impl Control {
+impl Message {
   fn to_bool(&self) -> bool {
     match self.value {
         0 => false,
@@ -37,7 +65,24 @@ impl Control {
   }
 }
 
-fn decode_message(midi_event: &MidiEvent) -> Control {
+// Value is templated so that the buttons can print boolean values and the sliders ints
+fn print_helper<T: Display>(group: u8, value: T, name: &Korg, timestamp: u32) {
+  println!("Group {}, Value {}, {:?}, Time {}", group, value, name, timestamp);
+}
+
+fn print_message(message: &Message) {
+  match message.name {
+    Korg::Knob | Korg::Slider => print_helper(message.group, 
+        message.value, &message.name, message.timestamp),
+    _ => print_helper(message.group, 
+          message.to_bool(), &message.name, message.timestamp),
+  };
+}
+
+// Converts the midi event into a more readable struct
+fn decode_midi(midi_event: &MidiEvent) -> Message {
+
+  let timestamp = midi_event.timestamp;
 
   let data1 = midi_event.message.data1;
   let data2 = midi_event.message.data2;
@@ -68,47 +113,65 @@ fn decode_message(midi_event: &MidiEvent) -> Control {
       _       => data1 % 8 + 1,
   };
 
-  Control {name:control, group:group, value:data2}
+  Message {name:control, group:group, value:data2, timestamp:timestamp}
 }
 
 
-fn print_control(control: &Control) {
-  match control.name {
-    Korg::Knob | Korg::Slider => println!("Group {}, Value {}, {:?}", 
-        control.group, control.value, control.name),
-    _ => println!("Group {}, Value {}, {:?}", 
-        control.group, control.to_bool(), control.name),
-  };
+//Updates NK2 with the midi message
+fn write_message(message: &Message, nk2: &mut NK2) {
+
+  let value_idx = (message.group - 1) as usize; // The groups are off by 1
+  let pressed = message.to_bool();
+
+  match message.name {
+    Korg::Knob        => nk2.controls[value_idx].knob = message.value,
+    Korg::Slider      => nk2.controls[value_idx].slider = message.value,
+    Korg::S           => nk2.controls[value_idx].solo = pressed,
+    Korg::M           => nk2.controls[value_idx].mute = pressed,
+    Korg::R           => nk2.controls[value_idx].rec = pressed,
+    Korg::TrackLeft   => nk2.track_left = pressed, 
+    Korg::TrackRight  => nk2.track_right = pressed,
+    Korg::Cycle       => nk2.cycle = pressed,
+    Korg::Set         => nk2.set = pressed, 
+    Korg::MarkerLeft  => nk2.marker_left = pressed, 
+    Korg::MarkerRight => nk2.marker_right = pressed,
+    Korg::Rewind      => nk2.rewind = pressed, 
+    Korg::FastForward => nk2.fast_forward = pressed, 
+    Korg::Stop        => nk2.stop = pressed, 
+    Korg::Play        => nk2.play = pressed,
+    Korg::Record      => nk2.record = pressed,
+  }
 }
 
 
 fn main() {
 
-    let context = PortMidi::new().unwrap();
+  let context = PortMidi::new().unwrap();
+  let info = context.device(DEVICE_NUM).unwrap();
+  let in_port = context.input_port(info, MAX_MESSAGES).unwrap();
 
-    let timeout = Duration::from_millis(10);
+  let timeout = time::Duration::from_millis(1);
 
-    let info = context.device(DEVICE_NUM).unwrap();
-    println!("Listening on: {}) {}", info.id(), info.name());
+  let mut nk2 = NK2::default();
 
-    let in_port = context.input_port(info, MAX_MESSAGES).unwrap();
+  loop {
 
-    loop {
+    if in_port.poll().unwrap() {
 
-      if in_port.poll().unwrap() {
+      let events = in_port.read_n(MAX_MESSAGES).unwrap().unwrap();
 
-        let events = in_port.read_n(MAX_MESSAGES).unwrap().unwrap();
+      for event in events.iter() {
 
-        for event in events.iter() {
+        let message = decode_midi(&event);
 
-          let control = decode_message(&event);
+        print_message(&message);
+        write_message(&message, &mut nk2);
 
-          print_control(&control)
-          
-        }
       }
-
-      thread::sleep(timeout);
     }
+
+    //println!("no message");
+    thread::sleep(timeout); //Sleep here so CPU is not 100%
+  }
 }
 
