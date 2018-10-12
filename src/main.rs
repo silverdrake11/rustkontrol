@@ -10,7 +10,7 @@ use std::thread;
 const DEVICE_NUM: i32 = 3;
 const MAX_MESSAGES: usize = 128;
 
-
+//test comment here
 #[derive(Debug)] // This line allows you to print enum values
 enum Korg {
   S, M, R,
